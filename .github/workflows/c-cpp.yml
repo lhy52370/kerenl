@@ -1,12 +1,13 @@
 name: Build Kernel
 
 on:
+  # 保留手动触发按钮
   workflow_dispatch:
     inputs:
       device:
         description: 'Target Device Code (设备代号)'
         required: true
-        default: 'lmi'
+        default: 'alioth' # 帮你把默认改成了红米K40
         type: choice
         options:
           - alioth
@@ -37,9 +38,15 @@ on:
           - miui
           - both
 
+  # 新增：当你推送代码到这个分支时，自动触发编译（按钮不消失，且支持自动编译）
+  push:
+    branches:
+      - lineage-24.0
+      - main
+
 jobs:
   build-kernel:
-    name: Build ${{ github.event.inputs.device }} | KSU:${{ github.event.inputs.ksu }} | OS:${{ github.event.inputs.target_os }}
+    name: Build ${{ github.event.inputs.device || 'alioth' }} | KSU:${{ github.event.inputs.ksu }} | OS:${{ github.event.inputs.target_os }}
     runs-on: ubuntu-latest
     
     steps:
@@ -61,9 +68,9 @@ jobs:
       uses: actions/cache@v6
       with:
         path: ~/.cache/ccache_mikernel
-        key: ${{ runner.os }}-kernel-ccache-${{ github.event.inputs.device }}-${{ github.run_id }}
+        key: ${{ runner.os }}-kernel-ccache-${{ github.event.inputs.device || 'alioth' }}-${{ github.run_id }}
         restore-keys: |
-          ${{ runner.os }}-kernel-ccache-${{ github.event.inputs.device }}-
+          ${{ runner.os }}-kernel-ccache-${{ github.event.inputs.device || 'alioth' }}-
           ${{ runner.os }}-kernel-ccache-
 
     - name: Setup zyc-clang 16 Toolchain
@@ -208,14 +215,18 @@ PY
       run: |
         chmod +x build_kernel.sh
         
-        ARGS="${{ github.event.inputs.device }}"
+        # 兼容：如果是手动触发，用 inputs；如果是 push 触发，默认用 alioth 和 both
+        DEVICE="${{ github.event.inputs.device || 'alioth' }}"
+        TARGET_OS="${{ github.event.inputs.target_os || 'both' }}"
+        
+        ARGS="$DEVICE"
         
         if [ "${{ github.event.inputs.ksu }}" == "true" ]; then
           ARGS="$ARGS ksu"
         fi
         
-        if [ "${{ github.event.inputs.target_os }}" != "both" ]; then
-          ARGS="$ARGS ${{ github.event.inputs.target_os }}"
+        if [ "$TARGET_OS" != "both" ]; then
+          ARGS="$ARGS $TARGET_OS"
         fi
         
         echo "Executing command: ./build_kernel.sh $ARGS"
@@ -224,6 +235,6 @@ PY
     - name: Upload Flashable ZIP
       uses: actions/upload-artifact@v7
       with:
-        name: APTKernel-${{ github.event.inputs.device }}-${{ github.event.inputs.target_os }}-${{ github.run_id }}
+        name: APTKernel-${{ github.event.inputs.device || 'alioth' }}-${{ github.event.inputs.target_os || 'both' }}-${{ github.run_id }}
         path: APTKernel_*.zip
         compression-level: 0 # 已经被 zip 压缩过，无需再二次压缩。看这一个 YML他都在干什么？
