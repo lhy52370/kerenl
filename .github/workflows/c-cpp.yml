@@ -45,102 +45,121 @@ on:
 jobs:
   build-kernel:
     name: Build Kernel
-    runs-on: ubuntu-latest
-    
+    runs-on: ubuntu-22.04
+
     steps:
-    - name: Checkout Repository
-      uses: actions/checkout@v7
-      with:
-        fetch-depth: 1
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
 
-    - name: Set up Environment
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y bc bison build-essential ccache curl flex gawk git gnupg gperf imagemagick libncurses-dev lib32readline-dev lib32z1-dev liblz4-tool libsdl1.2-dev libssl-dev libxml2 libxml2-utils lzop pngcrush rsync schedtool squashfs-tools xsltproc zip zlib1g-dev python3
+      - name: Set up Environment
+        run: |
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            bc \
+            bison \
+            build-essential \
+            ccache \
+            curl \
+            flex \
+            gawk \
+            git \
+            gnupg \
+            gperf \
+            imagemagick \
+            libncurses-dev \
+            lib32readline-dev \
+            lib32z1-dev \
+            liblz4-dev \
+            lz4 \
+            libxml2-dev \
+            libsdl1.2-dev \
+            libssl-dev
 
-    - name: Cache ccache
-      uses: actions/cache@v6
-      with:
-        path: ~/.cache/ccache_mikernel
-        key: kernel-ccache-${{ github.run_id }}
-        restore-keys: |
-          kernel-ccache-
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ccache_mikernel
+          key: kernel-ccache-${{ github.run_id }}
+          restore-keys: |
+            kernel-ccache-
 
-    - name: Setup zyc-clang 16 Toolchain
-      run: |
-        mkdir -p $HOME/zyc-clang
-        cd $HOME/zyc-clang
-        wget -q https://github.com/ZyCromerZ/Clang/releases/download/16.0.6-20260807-release/Clang-16.0.6-20260807.tar.gz
-        tar -zxvf Clang-16.0.6-20260807.tar.gz
+      - name: Setup zyc-clang 16 Toolchain
+        run: |
+          mkdir -p $HOME/zyc-clang
+          cd $HOME/zyc-clang
+          wget -q https://github.com/ZyCromerZ/Clang/releases/download/16.0.6-20260807-release/Clang-16.0.6-20260807.tar.gz
+          tar -zxvf Clang-16.0.6-20260807.tar.gz
 
-    - name: Auto Download & Run setup.sh
-      run: |
-        curl -LSs "https://raw.githubusercontent.com/Baka-SU/BakaSU/main/kernel/setup.sh" -o setup.sh
-        chmod +x setup.sh
-        ./setup.sh
+      - name: Auto Download & Run setup.sh
+        run: |
+          curl -LSs "https://raw.githubusercontent.com/Baka-SU/BakaSU/main/kernel/setup.sh" -o setup.sh
+          chmod +x setup.sh
+          ./setup.sh
 
-    - name: Auto Apply BakaSU Manual Hook
-      run: |
-        cat << 'EOF_SCRIPT' > patch_hook.sh
-        #!/bin/bash
-        if [ ! -f "Makefile" ]; then exit 0; fi
-        EXEC_C="fs/exec.c"
-        if [ -f "$EXEC_C" ] && ! grep -q "ksu_handle_execveat" "$EXEC_C"; then
-            sed -i '/static int do_execveat_common/a \
-        #ifdef CONFIG_KSU_MANUAL_HOOK\n\
-        \textern int ksu_handle_execveat(int *fd, struct filename **filename_ptr, void *argv, void *envp, int *flags);\n\
-        \tksu_handle_execveat(\&fd, \&filename, \&argv, \&envp, \&flags);\n\
-        #endif' "$EXEC_C"
-        fi
-        OPEN_C="fs/open.c"
-        if [ -f "$OPEN_C" ] && ! grep -q "ksu_handle_stat" "$OPEN_C"; then
-            sed -i '/^int vfs_statx(/a \
-        #ifdef CONFIG_KSU_MANUAL_HOOK\n\
-        \textern int ksu_handle_stat(int *dfd, const char __user **filename_user, int *flags);\n\
-        \tksu_handle_stat(\&dfd, \&filename, \&flags);\n\
-        #endif' "$OPEN_C"
-        fi
-        EOF_SCRIPT
-        chmod +x patch_hook.sh
-        ./patch_hook.sh
+      - name: Auto Apply BakaSU Manual Hook
+        run: |
+          cat << 'EOF_SCRIPT' > patch_hook.sh
+          #!/bin/bash
+          if [ ! -f "Makefile" ]; then exit 0; fi
+          EXEC_C="fs/exec.c"
+          if [ -f "$EXEC_C" ] && ! grep -q "ksu_handle_execveat" "$EXEC_C"; then
+              sed -i '/static int do_execveat_common/a \
+          #ifdef CONFIG_KSU_MANUAL_HOOK\n\
+          \textern int ksu_handle_execveat(int *fd, struct filename **filename_ptr, void *argv, void *envp, int *flags);\n\
+          \tksu_handle_execveat(\&fd, \&filename, \&argv, \&envp, \&flags);\n\
+          #endif' "$EXEC_C"
+          fi
+          OPEN_C="fs/open.c"
+          if [ -f "$OPEN_C" ] && ! grep -q "ksu_handle_stat" "$OPEN_C"; then
+              sed -i '/^int vfs_statx(/a \
+          #ifdef CONFIG_KSU_MANUAL_HOOK\n\
+          \textern int ksu_handle_stat(int *dfd, const char __user **filename_user, int *flags);\n\
+          \tksu_handle_stat(\&dfd, \&filename, \&flags);\n\
+          #endif' "$OPEN_C"
+          fi
+          EOF_SCRIPT
+          chmod +x patch_hook.sh
+          ./patch_hook.sh
 
-    - name: Auto Patch & Merge Config
-      run: |
-        cat << 'EOF_SCRIPT' > merge_conf.sh
-        #!/bin/bash
-        FRAG_CONFIG=$(find arch/arm64/configs -path "*vendor/xiaomi/alioth.config" 2>/dev/null | head -n 1)
-        COMMON_FRAG=$(find arch/arm64/configs -path "*vendor/xiaomi/sm8250-common.config" 2>/dev/null | head -n 1)
-        BASE_CONFIG=$(find arch/arm64/configs -name "*alioth*defconfig" 2>/dev/null | head -n 1)
-        if [ -n "$FRAG_CONFIG" ]; then
-            grep -q "^CONFIG_KSU=y" "$FRAG_CONFIG" || echo "CONFIG_KSU=y" >> "$FRAG_CONFIG"
-            grep -q "^CONFIG_KSU_MANUAL_HOOK=y" "$FRAG_CONFIG" || echo "CONFIG_KSU_MANUAL_HOOK=y" >> "$FRAG_CONFIG"
-            if [ -f "scripts/kconfig/merge_config.sh" ]; then
-                MERGE_CMD="./scripts/kconfig/merge_config.sh -m"
-                if [ -n "$BASE_CONFIG" ]; then MERGE_CMD="$MERGE_CMD $BASE_CONFIG"; fi
-                if [ -n "$COMMON_FRAG" ]; then MERGE_CMD="$MERGE_CMD $COMMON_FRAG"; fi
-                MERGE_CMD="$MERGE_CMD $FRAG_CONFIG"
-                eval "$MERGE_CMD"
-            fi
-        fi
-        EOF_SCRIPT
-        chmod +x merge_conf.sh
-        ./merge_conf.sh
+      - name: Auto Patch & Merge Config
+        run: |
+          cat << 'EOF_SCRIPT' > merge_conf.sh
+          #!/bin/bash
+          FRAG_CONFIG=$(find arch/arm64/configs -path "*vendor/xiaomi/alioth.config" 2>/dev/null | head -n 1)
+          COMMON_FRAG=$(find arch/arm64/configs -path "*vendor/xiaomi/sm8250-common.config" 2>/dev/null | head -n 1)
+          BASE_CONFIG=$(find arch/arm64/configs -name "*alioth*defconfig" 2>/dev/null | head -n 1)
+          if [ -n "$FRAG_CONFIG" ]; then
+              grep -q "^CONFIG_KSU=y" "$FRAG_CONFIG" || echo "CONFIG_KSU=y" >> "$FRAG_CONFIG"
+              grep -q "^CONFIG_KSU_MANUAL_HOOK=y" "$FRAG_CONFIG" || echo "CONFIG_KSU_MANUAL_HOOK=y" >> "$FRAG_CONFIG"
+              if [ -f "scripts/kconfig/merge_config.sh" ]; then
+                  MERGE_CMD="./scripts/kconfig/merge_config.sh -m"
+                  if [ -n "$BASE_CONFIG" ]; then MERGE_CMD="$MERGE_CMD $BASE_CONFIG"; fi
+                  if [ -n "$COMMON_FRAG" ]; then MERGE_CMD="$MERGE_CMD $COMMON_FRAG"; fi
+                  MERGE_CMD="$MERGE_CMD $FRAG_CONFIG"
+                  eval "$MERGE_CMD"
+              fi
+          fi
+          EOF_SCRIPT
+          chmod +x merge_conf.sh
+          ./merge_conf.sh
 
-    - name: Run Build Script
-      run: |
-        chmod +x build_kernel.sh
-        DEVICE="alioth"
-        TARGET_OS="both"
-        if [ "${{ github.event.inputs.device }}" != "" ]; then DEVICE="${{ github.event.inputs.device }}"; fi
-        if [ "${{ github.event.inputs.target_os }}" != "" ]; then TARGET_OS="${{ github.event.inputs.target_os }}"; fi
-        ARGS="$DEVICE"
-        if [ "${{ github.event.inputs.ksu }}" == "true" ]; then ARGS="$ARGS ksu"; fi
-        if [ "$TARGET_OS" != "both" ]; then ARGS="$ARGS $TARGET_OS"; fi
-        ./build_kernel.sh $ARGS
+      - name: Run Build Script
+        run: |
+          chmod +x build_kernel.sh
+          DEVICE="alioth"
+          TARGET_OS="both"
+          if [ "${{ github.event.inputs.device }}" != "" ]; then DEVICE="${{ github.event.inputs.device }}"; fi
+          if [ "${{ github.event.inputs.target_os }}" != "" ]; then TARGET_OS="${{ github.event.inputs.target_os }}"; fi
+          ARGS="$DEVICE"
+          if [ "${{ github.event.inputs.ksu }}" == "true" ]; then ARGS="$ARGS ksu"; fi
+          if [ "$TARGET_OS" != "both" ]; then ARGS="$ARGS $TARGET_OS"; fi
+          ./build_kernel.sh $ARGS
 
-    - name: Upload Flashable ZIP
-      uses: actions/upload-artifact@v7
-      with:
-        name: APTKernel-${{ github.event.inputs.device || 'alioth' }}
-        path: APTKernel_*.zip
-        compression-level: 0
+      - name: Upload Flashable ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: APTKernel-${{ github.event.inputs.device || 'alioth' }}
+          path: APTKernel_*.zip
+          compression-level: 0
